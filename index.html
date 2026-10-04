@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>数字人动作跟随</title>
+  <link rel="icon" href="data:," />
+  <style>
+    :root {
+      --bg: #0f1115;
+      --panel: rgba(22, 25, 32, 0.82);
+      --border: rgba(255, 255, 255, 0.08);
+      --text: #e6e8ee;
+      --muted: #8b91a1;
+      --accent: #5b8cff;
+      --ok: #3ecf8e;
+      --warn: #f5a524;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+      font: 14px/1.5 -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", sans-serif; overflow: hidden; }
+    #stage { position: fixed; inset: 0; }
+    #stage canvas { display: block; }
+
+    .panel { position: fixed; background: var(--panel); border: 1px solid var(--border);
+      border-radius: 12px; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+
+    #controls { top: 16px; left: 16px; padding: 14px 16px; width: 260px; max-height: calc(100vh - 32px); overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+    #controls h1 { margin: 0; font-size: 15px; font-weight: 600; }
+    #status { color: var(--muted); font-size: 12px; min-height: 18px; }
+    #status.ok { color: var(--ok); }
+    #status.warn { color: var(--warn); }
+
+    button, .file-btn { appearance: none; border: 0; border-radius: 8px; padding: 9px 12px; font: inherit; cursor: pointer;
+      background: var(--accent); color: #fff; text-align: center; }
+    button:disabled { opacity: .5; cursor: default; }
+    .file-btn { background: rgba(255,255,255,.08); color: var(--text); }
+    .file-btn input { display: none; }
+    select { appearance: none; font: inherit; color: var(--text); background: rgba(255,255,255,.08) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%238b91a1'/%3E%3C/svg%3E") no-repeat right 12px center;
+      border: 0; border-radius: 8px; padding: 9px 12px; cursor: pointer; }
+    select option { background: #1b1e26; }
+
+    .toggles { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; font-size: 13px; color: var(--muted); }
+    .toggles label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+    .hint { font-size: 12px; color: var(--muted); }
+
+    #preview { right: 16px; bottom: 16px; width: 280px; overflow: hidden; padding: 0; }
+    #preview .wrap { position: relative; aspect-ratio: 4 / 3; background: #000; }
+    #preview video, #preview canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+    #preview .bar { display: flex; justify-content: space-between; padding: 6px 10px; font-size: 12px; color: var(--muted); }
+
+    button.secondary { background: rgba(255,255,255,.08); color: var(--text); }
+    button.icon { background: transparent; color: var(--muted); padding: 4px 8px; }
+
+    #sculpt { top: 16px; right: 16px; width: 280px; max-height: calc(100vh - 300px); overflow-y: auto;
+      padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+    #sculpt[hidden] { display: none; }
+    .sculpt-head { display: flex; justify-content: space-between; align-items: center; }
+    .sculpt-head h2 { margin: 0; font-size: 15px; font-weight: 600; }
+    .group-title { margin: 4px 0 -2px; font-size: 12px; font-weight: 600; color: var(--muted); }
+    .slider { display: grid; grid-template-columns: 64px 1fr; align-items: center; gap: 8px; font-size: 13px; }
+    .slider input { width: 100%; accent-color: var(--accent); }
+    .sculpt-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .sculpt-actions[hidden] { display: none; }
+
+    .tabs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; background: rgba(255,255,255,.05); border-radius: 8px; padding: 3px; }
+    .tabs button { background: transparent; color: var(--muted); padding: 6px 0; font-size: 13px; }
+    .tabs button[aria-selected="true"] { background: rgba(255,255,255,.12); color: var(--text); }
+    .tab-page { display: flex; flex-direction: column; gap: 10px; }
+    .tab-page[hidden] { display: none; }
+    .swatches { display: flex; flex-wrap: wrap; gap: 6px; }
+    .swatch { width: 26px; height: 26px; padding: 0; border-radius: 50%; border: 2px solid transparent; cursor: pointer; }
+    .swatch[aria-pressed="true"] { border-color: var(--text); box-shadow: 0 0 0 2px var(--accent); }
+    .swatch.original { background: conic-gradient(#e0b49a, #3a2416, #3b78c9, #e0b49a); }
+
+    details summary { cursor: pointer; color: var(--text); font-size: 13px; padding: 2px 0; }
+    details[open] summary { margin-bottom: 8px; }
+    .scene-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .scene-grid label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+    .scene-grid select { padding: 7px 10px; }
+    .scene-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+    #recBtn.recording { background: #e5484d; color: #fff; }
+
+    body.clean .panel, body.clean #toast { display: none !important; }
+    #toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: var(--panel); border: 1px solid var(--border);
+      border-radius: 999px; padding: 8px 16px; font-size: 13px; opacity: 0; transition: opacity .2s; pointer-events: none; }
+    #toast.show { opacity: 1; }
+
+    #drop { position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
+      background: rgba(91,140,255,.15); border: 3px dashed var(--accent); font-size: 20px; pointer-events: none; }
+    body.dragging #drop { display: flex; }
+
+    @media (max-width: 640px) {
+      #sculpt { top: auto; bottom: 16px; left: 16px; right: 16px; width: auto; max-height: 45vh; }
+      #controls { left: 16px; right: 16px; width: auto; }
+      #preview { width: 160px; }
+    }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "./vendor/three/build/three.module.js",
+        "three/addons/": "./vendor/three/examples/jsm/",
+        "@pixiv/three-vrm": "./vendor/three-vrm/three-vrm.module.min.js",
+        "kalidokit": "./vendor/kalidokit/kalidokit.es.js",
+        "@mediapipe/tasks-vision": "./vendor/mediapipe/vision_bundle.mjs"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="stage"></div>
+
+  <div id="controls" class="panel">
+    <h1>数字人动作跟随</h1>
+    <div id="status">正在加载模型…</div>
+    <button id="startBtn" disabled>开启摄像头</button>
+    <select id="avatarSelect" aria-label="选择数字人"></select>
+    <select id="poseModel" aria-label="姿态识别精度">
+      <option value="pose_landmarker_heavy.task">识别精度：高（较慢）</option>
+      <option value="pose_landmarker_full.task">识别精度：标准（较快）</option>
+    </select>
+    <button id="sculptBtn" class="secondary">捏人</button>
+    <label class="file-btn">上传 VRM 模型<input id="vrmFile" type="file" accept=".vrm" /></label>
+    <div class="toggles">
+      <label><input type="checkbox" id="tFace" checked /> 面部表情</label>
+      <label><input type="checkbox" id="tHands" checked /> 手指</label>
+      <label><input type="checkbox" id="tLegs" checked /> 腿部</label>
+      <label><input type="checkbox" id="tMove" checked /> 身体位移</label>
+    </div>
+    <details id="sceneBox">
+      <summary>场景与输出</summary>
+      <div class="scene-grid">
+        <label>背景<select id="bgSelect">
+          <option value="dark">深色</option>
+          <option value="light">浅色</option>
+          <option value="gradient">渐变</option>
+          <option value="green">绿幕（抠像）</option>
+          <option value="blue">蓝幕（抠像）</option>
+        </select></label>
+        <label>灯光<select id="lightSelect">
+          <option value="studio">摄影棚</option>
+          <option value="soft">柔光</option>
+          <option value="warm">暖光</option>
+          <option value="cool">冷光</option>
+          <option value="drama">戏剧</option>
+        </select></label>
+      </div>
+      <div class="scene-actions">
+        <button id="shotBtn" class="secondary">截图</button>
+        <button id="recBtn" class="secondary">录制视频</button>
+      </div>
+      <div class="hint">按 H 隐藏/显示界面，方便录屏或直播。</div>
+    </details>
+    <div class="hint">数字人像镜子一样跟随你。离摄像头 1.5–2 米、露出全身效果最好；可直接把 .vrm 文件拖进页面。</div>
+  </div>
+
+  <div id="preview" class="panel">
+    <div class="wrap">
+      <video id="video" playsinline muted></video>
+      <canvas id="overlay"></canvas>
+    </div>
+    <div class="bar"><span id="track">未检测到人</span><span id="fps">– fps</span></div>
+  </div>
+
+  <div id="sculpt" class="panel" hidden>
+    <div class="sculpt-head">
+      <h2>捏人</h2>
+      <button id="sculptClose" class="icon" aria-label="关闭">✕</button>
+    </div>
+    <div class="tabs" role="tablist">
+      <button role="tab" data-tab="face" aria-selected="true">脸部</button>
+      <button role="tab" data-tab="body">身体</button>
+      <button role="tab" data-tab="color">颜色</button>
+      <button role="tab" data-tab="save">存档</button>
+    </div>
+    <div class="tab-page" data-page="face"></div>
+    <div class="tab-page" data-page="body" hidden></div>
+    <div class="tab-page" data-page="color" hidden></div>
+    <div class="tab-page" data-page="save" hidden>
+      <div class="hint">形象（脸、身体、颜色）会按数字人自动保存在本机浏览器。也可以导出成文件备份，或分享给别人导入。</div>
+      <button id="lookExport" class="secondary">导出形象文件</button>
+      <label class="file-btn">导入形象文件<input id="lookImport" type="file" accept=".json,application/json" /></label>
+    </div>
+    <div id="sculptNote" class="hint"></div>
+    <div class="sculpt-actions">
+      <button id="sculptRandom" class="secondary">随机</button>
+      <button id="sculptReset" class="secondary">重置本页</button>
+    </div>
+  </div>
+
+  <div id="toast"></div>
+  <div id="drop">松开以加载 VRM 模型</div>
+
+  <script type="module" src="./main.js"></script>
+</body>
+</html>
